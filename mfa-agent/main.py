@@ -82,10 +82,14 @@ def sanitize(s):
     return s.decode('utf-8').strip().lower()
 
 
+def vstring():
+    return f'mfa-agent: {VERSION}'
+
+
 def handle_data(secrets, data):
     sanitized = sanitize(data)
     if sanitized == HELLO_COMMAND:
-        return f'mfa-agent: {VERSION}'
+        return vstring()
     if sanitized == LIST_COMMAND:
         return '\n'.join(secrets.keys())
     elif sanitized == EXIT_COMMAND:
@@ -195,6 +199,14 @@ def query_command(name, port):
     return query_agent(name, port, 2024)
 
 
+def check_running(port):
+    try:
+        response = query_command(HELLO_COMMAND, port)
+        return response == vstring()
+    except:
+        return False
+
+
 def main():
     # read in command line args
     parser = argparse.ArgumentParser()
@@ -212,9 +224,14 @@ def main():
             print('[mfa-agent] STDERR, No config file specified for load command', file=sys.stderr)
             sys.exit(-2)
 
-        load_agent(args)
+        if check_running(args.bind_port):
+            print('[mfa-agent] STDERR, Already running on port {args.bind_port}', file=sys.stderr)
+        else:
+            load_agent(args)
+
     elif args.command.lower() in COMMANDS:
         print(query_command(args.command, args.bind_port))
+
     else:
         print(query_code(args.command, args.bind_port))
 
