@@ -1,2 +1,4 @@
-pykeepass>=3.0.3
+pykeepass
 toml
+python-daemon
+pex
