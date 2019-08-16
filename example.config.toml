@@ -3,9 +3,7 @@ kdbx_database_file="example.kdbx"
 kdbx_key_file="example.key"
 
 [mfa-secrets]
-entries = [
-    "example-entry",
-]
+entries = "all"
 
 [other-mfa-secrets]
 entries = [

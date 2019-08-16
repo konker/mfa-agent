@@ -151,6 +151,14 @@ def load_agent(args):
 
         entry_names = config[group_name]['entries']
 
+        if entry_names == "all":
+            group = kp.find_groups(name=group_name, first=True)
+            if group:
+                entry_names = [i.title for i in group.entries]
+            else:
+                print(f'[mfa-agent] STDERR, Warning: Could not find group: {group_name}', file=sys.stderr)
+                entry_names = []
+
         for entry_name in entry_names:
             if entry_name.lower() in COMMANDS:
                 print(f'[mfa-agent] STDERR, Ignoring entry with reserved name: {entry_name}', file=sys.stderr)
@@ -164,7 +172,7 @@ def load_agent(args):
             else:
                 print(f'[mfa-agent] STDERR, Could not find entry: {entry_path}', file=sys.stderr)
 
-    # TODO: spawn daemon to listen to socket requests and give secrets
+    # Spawn daemon to listen to socket requests and give codes
     print(f'[mfa-agent] Spawning daemon on port: {args.bind_port}')
     with daemon.DaemonContext():
         serve_forever(secrets, args.bind_port)
@@ -205,7 +213,7 @@ def main():
             sys.exit(-2)
 
         load_agent(args)
-    if args.command.lower() in COMMANDS:
+    elif args.command.lower() in COMMANDS:
         print(query_command(args.command, args.bind_port))
     else:
         print(query_code(args.command, args.bind_port))
