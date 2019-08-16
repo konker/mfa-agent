@@ -203,7 +203,7 @@ def check_running(port):
     try:
         response = query_command(HELLO_COMMAND, port)
         return response == vstring()
-    except:
+    except ConnectionRefusedError:
         return False
 
 
@@ -225,15 +225,21 @@ def main():
             sys.exit(-2)
 
         if check_running(args.bind_port):
-            print('[mfa-agent] STDERR, Already running on port {args.bind_port}', file=sys.stderr)
+            print(f'[mfa-agent] STDERR, Already running on port {args.bind_port}', file=sys.stderr)
         else:
             load_agent(args)
 
     elif args.command.lower() in COMMANDS:
-        print(query_command(args.command, args.bind_port))
+        try:
+            print(query_command(args.command, args.bind_port))
+        except ConnectionRefusedError:
+            print(f'[mfa-agent] STDERR, Agent not running on port {args.bind_port}', file=sys.stderr)
 
     else:
-        print(query_code(args.command, args.bind_port))
+        try:
+            print(query_code(args.command, args.bind_port))
+        except ConnectionRefusedError:
+            print(f'[mfa-agent] STDERR, Agent not running on port {args.bind_port}', file=sys.stderr)
 
 
 if __name__ == '__main__':
