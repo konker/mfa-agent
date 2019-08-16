@@ -22,7 +22,13 @@ PORT_KEY = 'port'
 DATABASE_GROUP_NAME = 'database'
 DATABASE_FILE_KEY = 'kdbx_database_file'
 KEY_FILE_KEY = 'kdbx_key_file'
-DEFAULT_PORT = 987654
+DEFAULT_PORT = 54321
+
+HELLO_COMMAND = 'hello'
+LIST_COMMAND = 'list'
+EXIT_COMMAND = 'exit'
+LOAD_COMMAND = 'load'
+COMMANDS = [HELLO_COMMAND, LIST_COMMAND, EXIT_COMMAND, LOAD_COMMAND]
 
 
 # Quick way to generate Google Authenticator tokens widely used for multi-factor authentication
@@ -73,16 +79,16 @@ def totp(secret):
 
 
 def sanitize(s):
-    return s.decode('utf-8').strip().upper()
+    return s.decode('utf-8').strip().lower()
 
 
 def handle_data(secrets, data):
     sanitized = sanitize(data)
-    if sanitized == 'HELO':
+    if sanitized == HELLO_COMMAND:
         return f'mfa-agent: {VERSION}'
-    if sanitized == 'LIST':
+    if sanitized == LIST_COMMAND:
         return '\n'.join(secrets.keys())
-    elif sanitized == 'EXIT':
+    elif sanitized == EXIT_COMMAND:
         return 'EXIT'
     elif sanitized in secrets:
         return totp(secrets[sanitized])
@@ -90,7 +96,7 @@ def handle_data(secrets, data):
         return 'UNKNOWN'
 
 
-def serve_forever(secrets, port=DEFAULT_PORT):
+def serve_forever(secrets, port):
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('', port))
@@ -106,31 +112,17 @@ def serve_forever(secrets, port=DEFAULT_PORT):
             return
 
 
-def main():
-    # read in command line args
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--bind-address", "-b", help="Port to bind to", default=DEFAULT_PORT)
-    parser.add_argument("--config", "-c", help="Path to the config file")
-    args = parser.parse_args()
-
-    if not args.config:
-        print('[mfa-agent] STDERR, No config file specified')
-        sys.exit(-1)
-
+def load_agent(args):
     # Load config
     print('[mfa-agent] Loading config:', args.config)
     config = toml.load(args.config)
 
-    if not config[DATABASE_GROUP_NAME] or not config[DAEMON_GROUP_NAME]:
-        print('[mfa-agent] STDERR, Bad config')
+    if not config.get(DATABASE_GROUP_NAME):
+        print(f'[mfa-agent] STDERR, Bad config, no {DATABASE_GROUP_NAME} group', file=sys.stderr)
         sys.exit(1)
 
-    if not config[DAEMON_GROUP_NAME][PORT_KEY]:
-        print(f'[mfa-agent] STDERR, No {PORT_KEY} specified in config')
-        sys.exit(1)
-
-    if not config[DATABASE_GROUP_NAME][DATABASE_FILE_KEY]:
-        print(f'[mfa-agent] STDERR, No {DATABASE_FILE_KEY} specified in config')
+    if not config.get(DATABASE_GROUP_NAME, {}).get(DATABASE_FILE_KEY):
+        print(f'[mfa-agent] STDERR, No {DATABASE_FILE_KEY} specified in config', file=sys.stderr)
         sys.exit(1)
 
     kdbx_database_file = config[DATABASE_GROUP_NAME][DATABASE_FILE_KEY]
@@ -154,25 +146,69 @@ def main():
     # Load the entries from each group into memory
     for group_name in group_names:
         if 'entries' not in config[group_name]:
-            print(f'[mfa-agent] STDERR, No entries in group: {group_name}, skipping')
+            print(f'[mfa-agent] STDERR, No entries in group: {group_name}, skipping', file=sys.stderr)
             continue
 
         entry_names = config[group_name]['entries']
 
         for entry_name in entry_names:
+            if entry_name.lower() in COMMANDS:
+                print(f'[mfa-agent] STDERR, Ignoring entry with reserved name: {entry_name}', file=sys.stderr)
+                continue
+
             entry_path = f'{group_name}/{entry_name}'
             entry = kp.find_entries(path=entry_path, recursive=True, first=True)
 
             if entry:
-                secrets[entry_name.upper()] = entry.password
+                secrets[entry_name.lower()] = entry.password
             else:
-                print(f'[mfa-agent] STDERR, Could not find entry: {entry_path}')
-
-    port = config[DAEMON_GROUP_NAME][PORT_KEY]
+                print(f'[mfa-agent] STDERR, Could not find entry: {entry_path}', file=sys.stderr)
 
     # TODO: spawn daemon to listen to socket requests and give secrets
+    print(f'[mfa-agent] Spawning daemon on port: {args.bind_port}')
     with daemon.DaemonContext():
-        serve_forever(secrets, port)
+        serve_forever(secrets, args.bind_port)
+
+
+def query_agent(name, port, bufsize):
+    sock = socket.socket()
+    sock.connect(('', port))
+    sock.send(name.encode('utf-8'))
+    return sock.recv(bufsize).decode('utf-8')
+
+
+def query_code(name, port):
+    print(f'[mfa-agent] STDERR, query code {name} on port {port}', file=sys.stderr)
+    return query_agent(name, port, 6)
+
+
+def query_command(name, port):
+    print(f'[mfa-agent] STDERR, query command {name} on port {port}', file=sys.stderr)
+    return query_agent(name, port, 2024)
+
+
+def main():
+    # read in command line args
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bind-port", "-b", help="Port to bind to", default=DEFAULT_PORT)
+    parser.add_argument("--config", "-c", help="Path to the config file")
+    parser.add_argument("command", help=f"`{LOAD_COMMAND}` to start agent, or entry name to query")
+    args = parser.parse_args()
+
+    if not args.command:
+        print('[mfa-agent] STDERR, No command specified', file=sys.stderr)
+        sys.exit(-1)
+
+    if args.command.lower() == LOAD_COMMAND:
+        if not args.config:
+            print('[mfa-agent] STDERR, No config file specified for load command', file=sys.stderr)
+            sys.exit(-2)
+
+        load_agent(args)
+    if args.command.lower() in COMMANDS:
+        print(query_command(args.command, args.bind_port))
+    else:
+        print(query_code(args.command, args.bind_port))
 
 
 if __name__ == '__main__':

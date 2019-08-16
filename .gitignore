@@ -1,6 +1,6 @@
 # App-specific
 *.lock
-example.key
+*.key
 *.kdbx
 
 # Byte-compiled / optimized / DLL files

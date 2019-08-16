@@ -1,9 +1,0 @@
-[database]
-kdbx_database_file="/home/konker/WORKING/konker/mfa-agent/example.kdbx"
-kdbx_key_file="/home/konker/WORKING/konker/mfa-agent/example.key"
-
-[mfa-secrets]
-entries = [
-    "example-entry",
-    "bad-entry"
-]
