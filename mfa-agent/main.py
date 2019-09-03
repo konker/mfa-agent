@@ -3,6 +3,7 @@
 # Author: Konrad Markus <konker@iki.fi>
 #
 
+import os
 import sys
 import time
 import math
@@ -10,6 +11,7 @@ import hashlib
 import hmac
 import base64
 import socket
+import signal
 import daemon
 import argparse
 import toml
@@ -18,11 +20,10 @@ import pykeepass
 
 VERSION = '1.0.0'
 DAEMON_GROUP_NAME = 'daemon'
-PORT_KEY = 'port'
 DATABASE_GROUP_NAME = 'database'
 DATABASE_FILE_KEY = 'kdbx_database_file'
 KEY_FILE_KEY = 'kdbx_key_file'
-DEFAULT_PORT = 54321
+DEFAULT_SOCKET_PATH = '/tmp/mfa-agent-sock'
 
 HELLO_COMMAND = 'hello'
 LIST_COMMAND = 'list'
@@ -30,6 +31,7 @@ EXIT_COMMAND = 'exit'
 LOAD_COMMAND = 'load'
 COMMANDS = [HELLO_COMMAND, LIST_COMMAND, EXIT_COMMAND, LOAD_COMMAND]
 
+running = False
 
 # Quick way to generate Google Authenticator tokens widely used for multi-factor authentication
 # Requires the shared secret to be made available:
@@ -100,12 +102,23 @@ def handle_data(secrets, data):
         return 'UNKNOWN'
 
 
-def serve_forever(secrets, port):
-    server = socket.socket()
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('', port))
+def shutdown(signum, frame):
+    global running
+    running = False
+
+
+def serve_forever(secrets, socket_path):
+    global running
+
+    if os.path.exists(socket_path):
+        os.remove(socket_path)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(socket_path)
     server.listen(1)
-    while True:
+    running = True
+
+    while running:
         conn, address = server.accept()
         data = conn.recv(1024)
         response = handle_data(secrets, data)
@@ -113,7 +126,7 @@ def serve_forever(secrets, port):
         conn.close()
 
         if response == 'EXIT':
-            return
+            shutdown(None, None)
 
 
 def load_agent(args):
@@ -177,40 +190,43 @@ def load_agent(args):
                 print(f'[mfa-agent] STDERR, Could not find entry: {entry_path}', file=sys.stderr)
 
     # Spawn daemon to listen to socket requests and give codes
-    print(f'[mfa-agent] Spawning daemon on port: {args.bind_port}')
-    with daemon.DaemonContext():
-        serve_forever(secrets, args.bind_port)
+    print(f'[mfa-agent] Spawning daemon on socket: {args.socket_path}')
+    with daemon.DaemonContext(signal_map={
+        signal.SIGTERM: shutdown,
+        signal.SIGTSTP: shutdown
+    }):
+        serve_forever(secrets, args.socket_path)
 
 
-def query_agent(name, port, bufsize):
-    sock = socket.socket()
-    sock.connect(('', port))
+def query_agent(name, socket_path, bufsize):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(socket_path)
     sock.send(name.encode('utf-8'))
     return sock.recv(bufsize).decode('utf-8')
 
 
-def query_code(name, port):
-    print(f'[mfa-agent] STDERR, query code {name} on port {port}', file=sys.stderr)
-    return query_agent(name, port, 6)
+def query_code(name, socket_path):
+    print(f'[mfa-agent] STDERR, query code {name} on socket {socket_path}', file=sys.stderr)
+    return query_agent(name, socket_path, 6)
 
 
-def query_command(name, port):
-    print(f'[mfa-agent] STDERR, query command {name} on port {port}', file=sys.stderr)
-    return query_agent(name, port, 2024)
+def query_command(name, socket_path):
+    print(f'[mfa-agent] STDERR, query command {name} on socket {socket_path}', file=sys.stderr)
+    return query_agent(name, socket_path, 2024)
 
 
-def check_running(port):
+def check_running(socket_path):
     try:
-        response = query_command(HELLO_COMMAND, port)
+        response = query_command(HELLO_COMMAND, socket_path)
         return response == vstring()
-    except ConnectionRefusedError:
+    except (FileNotFoundError, ConnectionRefusedError):
         return False
 
 
 def main():
     # read in command line args
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bind-port", "-b", help="Port to bind to", default=DEFAULT_PORT)
+    parser.add_argument("--socket-path", "-b", help="Unix socket path to use", default=DEFAULT_SOCKET_PATH)
     parser.add_argument("--config", "-c", help="Path to the config file")
     parser.add_argument("command", help=f"`{LOAD_COMMAND}` to start agent, or entry name to query")
     args = parser.parse_args()
@@ -224,22 +240,22 @@ def main():
             print('[mfa-agent] STDERR, No config file specified for load command', file=sys.stderr)
             sys.exit(-2)
 
-        if check_running(args.bind_port):
-            print(f'[mfa-agent] STDERR, Already running on port {args.bind_port}', file=sys.stderr)
+        if check_running(args.socket_path):
+            print(f'[mfa-agent] STDERR, Already running on socket {args.socket_path}', file=sys.stderr)
         else:
             load_agent(args)
 
     elif args.command.lower() in COMMANDS:
         try:
-            print(query_command(args.command, args.bind_port))
-        except ConnectionRefusedError:
-            print(f'[mfa-agent] STDERR, Agent not running on port {args.bind_port}', file=sys.stderr)
+            print(query_command(args.command, args.socket_path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            print(f'[mfa-agent] STDERR, Agent not running on socket {args.socket_path}', file=sys.stderr)
 
     else:
         try:
-            print(query_code(args.command, args.bind_port))
-        except ConnectionRefusedError:
-            print(f'[mfa-agent] STDERR, Agent not running on port {args.bind_port}', file=sys.stderr)
+            print(query_code(args.command, args.socket_path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            print(f'[mfa-agent] STDERR, Agent not running on socket {args.socket_path}', file=sys.stderr)
 
 
 if __name__ == '__main__':
