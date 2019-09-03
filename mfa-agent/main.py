@@ -153,7 +153,11 @@ def load_agent(args):
     password = getpass.getpass(prompt='[mfa-agent] Enter password: ')
 
     # Load in database
-    kp = pykeepass.PyKeePass(kdbx_database_file, password=password, keyfile=kdbx_key_file)
+    try:
+        kp = pykeepass.PyKeePass(kdbx_database_file, password=password, keyfile=kdbx_key_file)
+    except(ValueError, Exception):
+        print('[mfa-agent] STDERR, FATAL ERROR: Could not open database')
+        sys.exit(1)
 
     # Get group(s) from config
     group_names = [k for k in config.keys() if k != DATABASE_GROUP_NAME and k != DAEMON_GROUP_NAME]
