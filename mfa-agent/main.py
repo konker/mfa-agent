@@ -257,7 +257,7 @@ def main():
 
     else:
         try:
-            print(query_code(args.command, args.socket_path))
+            print(query_code(args.command, args.socket_path), end='', flush=True)
         except (FileNotFoundError, ConnectionRefusedError):
             print(f'[mfa-agent] STDERR, Agent not running on socket {args.socket_path}', file=sys.stderr)
 
